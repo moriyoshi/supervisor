@@ -104,7 +104,7 @@ class Controller(cmd.Cmd):
         self.vocab = ['add','exit','maintail','pid','reload',
                       'restart','start','stop','version','clear',
                       'fg','open','quit','remove','shutdown','status',
-                      'tail','help']
+                      'tail','signal','help']
         cmd.Cmd.__init__(self, completekey, stdin, stdout)
         for name, factory, kwargs in self.options.plugin_factories:
             plugin = factory(self, **kwargs)
@@ -270,7 +270,7 @@ class Controller(cmd.Cmd):
             return results[state]
         else:
             exp = line.split()[0]
-            if exp in ['start','stop','restart','clear','status','tail','fg','pid']:
+            if exp in ['start','stop','restart','clear','status','tail','fg','signal','pid']:
                 if not line.endswith(' ') and len(line.split()) == 1:
                     return [text + ' ', None][state]
                 if exp == 'fg':
@@ -1106,6 +1106,66 @@ class DefaultControllerPlugin(ControllerPluginBase):
     def help_fg(self,args=None):
         self.ctl.output('fg <process>\tConnect to a process in foreground mode')
         self.ctl.output('Press Ctrl+C to exit foreground')
+
+    def _signalresult(self, result):
+        name = result['name']
+        code = result['status']
+        fault_string = result['description']
+        template = '%s: ERROR (%s)'
+        if code == xmlrpc.Faults.BAD_NAME:
+            return template % (name, 'no such process')
+        elif code == xmlrpc.Faults.NOT_RUNNING:
+            return template % (name, 'not running')
+        elif code == xmlrpc.Faults.BAD_ARGUMENTS:
+            return template % (name, 'unknown sigspec')
+        elif code == xmlrpc.Faults.ABNORMAL_TERMINATION:
+            return template % (name, 'abnormal termination')
+        elif code == xmlrpc.Faults.SUCCESS:
+            return '%s: signalled' % name
+        elif code == xmlrpc.Faults.FAILED:
+            return fault_string
+        # assertion
+        raise ValueError('Unknown result code %s for %s' % (code, name))
+
+    def do_signal(self, arg):
+        supervisor = self.ctl.get_supervisor()
+        if not self.ctl.upcheck():
+            return
+        args = arg.strip().split()
+        if len(args) < 2:
+            self.ctl.output("Error: signal requires sigspec and at least one process name (or all)")
+            self.help_signal()
+            return
+        sigspec = args[0]
+        names = args[1:]
+        if 'all' in names:
+            results = supervisor.signalAllProcesses(sigspec)
+            for result in results:
+                self.ctl.output(self._signalresult(result))
+        else:
+            for name in names:
+                group_name, process_name = split_namespec(name)
+                if process_name is None:
+                    results = supervisor.signalProcessGroup(group_name, sigspec)
+                    for result in results:
+                        self.ctl.output(self._signalresult(result))
+                else:
+                    try:
+                        result = supervisor.signalProcess(name, sigspec)
+                    except xmlrpclib.Fault, e:
+                        error = self._signalresult({'status':e.faultCode,
+                                                   'name':name,
+                                                   'description':e.faultString})
+                        self.ctl.output(error)
+                    else:
+                        self.ctl.output('%s: signalled' % name)
+
+    def help_signal(self):
+        self.ctl.output("signal <sigspec> <name>\t\tSignal the "
+            "child process by name with the specified signal.")
+        self.ctl.output("signal <sigspec> all\t\tSignal every child "
+            "process with the specified signal.")
+
 
 def main(args=None, options=None):
     if options is None:

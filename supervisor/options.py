@@ -1911,6 +1911,15 @@ def signame(sig):
         _init_signames()
     return _signames.get(sig) or "signal %d" % sig
 
+def signum(sig):
+    """Resolve a signal number from the given symbolic name"""
+    if _signames is None:
+        _init_signames()
+    for num, _sig in _signames.items():
+        if sig.lower() == _sig.lower():
+            return num
+    return None
+
 def _init_signames():
     global _signames
     d = {}
