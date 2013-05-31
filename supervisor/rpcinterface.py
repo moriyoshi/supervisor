@@ -10,6 +10,7 @@ from supervisor.options import NotFound
 from supervisor.options import NoPermission
 from supervisor.options import make_namespec
 from supervisor.options import split_namespec
+from supervisor.options import signum
 from supervisor.options import VERSION
 
 from supervisor.events import notify
@@ -768,6 +769,112 @@ class SupervisorNamespaceRPCInterface:
         )
 
         return True
+
+    def _resolve_sigspec(self, sigspec):
+        try:
+            n = int(sigspec)
+        except (TypeError, ValueError):
+            sigspec = str(sigspec)
+            if not sigspec.startswith('SIG'):
+                sigspec = 'SIG' + sigspec
+            n = signum(sigspec)
+        return n
+
+    def signalProcess(self, name, sigspec, wait=True):
+        """ Start a process
+
+        @param string name Process name (or 'group:name', or 'group:*')
+        @param string sigspec Signal spec (either numeric or symbolic is allows)
+        @param boolean wait Wait for process to be fully started
+        @return boolean result     Always true unless error
+
+        """
+        self._update('signalProcess')
+        group, process = self._getGroupAndProcess(name)
+        if process is None:
+            group_name, process_name = split_namespec(name)
+            return self.signalProcessGroup(sigspec, group_name, wait)
+
+        signal = self._resolve_sigspec(sigspec)
+        if signal is None:
+            raise RPCError(Faults.BAD_ARGUMENTS)
+
+        signalled = []
+        called = []
+        startsecs = process.config.startsecs
+
+        def signalit():
+            if not called:
+                if process.get_state() not in RUNNING_STATES:
+                    raise RPCError(Faults.NOT_RUNNING)
+                called.append(1)
+
+            if not signalled:
+                msg = process.signal(signal)
+                if msg is not None:
+                    raise RPCError(Faults.FAILED, msg)
+                signalled.append(time.time())
+
+                if wait:
+                    return NOT_DONE_YET
+
+            runtime = (time.time() - signalled[0])
+
+            if runtime < startsecs:
+                return NOT_DONE_YET
+
+            if process.get_state() == ProcessStates.RUNNING:
+                return True
+
+            raise RPCError(Faults.ABNORMAL_TERMINATION, name)
+
+        signalit.delay = 0.2
+        signalit.rpcinterface = self
+        return signalit # deferred
+
+    def signalProcessGroup(self, name, sigspec, wait=True):
+        """ Start all processes in the group named 'name'
+
+        @param string name    The group name
+        @param string sigspec Signal spec (either numeric or symbolic is allows)
+        @param boolean wait   Wait for each process to be fully started
+        @return array result  An array of process status info structs
+        """
+        self._update('signalProcessGroup')
+
+        group = self.supervisord.process_groups.get(name)
+
+        if group is None:
+            raise RPCError(Faults.BAD_NAME, name)
+
+        processes = group.processes.values()
+        processes.sort()
+        processes = [ (group, process) for process in processes ]
+
+        signalall = make_allfunc(processes, isRunning, self.signalProcess,
+                                sigspec=sigspec, wait=wait)
+
+        signalall.delay = 0.2
+        signalall.rpcinterface = self
+        return signalall # deferred
+
+    def signalAllProcesses(self, sigspec, wait=True):
+        """ Start all processes listed in the configuration file
+
+        @param string sigspec Signal spec (either numeric or symbolic is allows)
+        @param boolean wait    Wait for each process to be fully started
+        @return array result   An array of process status info structs
+        """
+        self._update('signalAllProcesses')
+
+        processes = self._getAllProcesses()
+        signalall = make_allfunc(processes, isRunning, self.signalProcess,
+                                sigspec=sigspec, wait=wait)
+
+        signalall.delay = 0.2
+        signalall.rpcinterface = self
+        return signalall # deferred
+
 
 def make_allfunc(processes, predicate, func, **extra_kwargs):
     """ Return a closure representing a function that calls a

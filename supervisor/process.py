@@ -421,6 +421,59 @@ class Subprocess:
 
         return None
 
+    def signal(self, sig):
+        """Send a signal to the subprocess.  Unlike kill(), it doesn't
+        expect the subprocess to exit.
+
+        Return None if the signal was sent, or an error message string
+        if an error occurred or if the subprocess is not running.
+        """
+        now = time.time()
+        options = self.config.options
+        if not self.pid:
+            msg = ("attempted to kill %s with sig %s but it wasn't running" %
+                   (self.config.name, signame(sig)))
+            options.logger.debug(msg)
+            return msg
+
+        killasgroup = self.config.killasgroup
+
+        if killasgroup:
+            as_group = "process group "
+        else:
+            as_group = ""
+
+        options.logger.debug('killing %s (pid %s) %swith signal %s'
+                             % (self.config.name,
+                                self.pid,
+                                as_group,
+                                signame(sig))
+                             )
+
+        # RUNNING/STARTING/STOPPING -> STOPPING
+        self.delay = now + self.config.stopwaitsecs
+        self._assertInState(ProcessStates.RUNNING)
+
+        pid = self.pid
+        if killasgroup:
+            # send to the whole process group instead
+            pid = -self.pid
+        try:
+            options.kill(pid, sig)
+        except:
+            io = StringIO.StringIO()
+            traceback.print_exc(file=io)
+            tb = io.getvalue()
+            msg = 'unknown problem killing %s (%s):%s' % (self.config.name,
+                                                          self.pid, tb)
+            options.logger.critical(msg)
+            self.change_state(ProcessStates.UNKNOWN)
+            self.pid = 0
+            self.delay = 0
+            return msg
+
+        return None
+
     def finish(self, pid, sts):
         """ The process was reaped and we need to report and manage its state
         """

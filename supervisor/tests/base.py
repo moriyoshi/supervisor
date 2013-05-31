@@ -898,6 +898,46 @@ class DummySupervisorRPCNamespace:
             raise Fault(self._readlog_error, '')
         return 'mainlogdata'
 
+    def signalProcessGroup(self, name, sigspec):
+        from supervisor import xmlrpc
+        return [
+            {'name':'foo_00', 'group':'foo',
+             'status': xmlrpc.Faults.SUCCESS,
+             'description': 'OK'},
+            {'name':'foo_01', 'group':'foo',
+             'status':xmlrpc.Faults.SUCCESS,
+             'description': 'OK'},
+            ]
+
+    def signalProcess(self, name, sigspec):
+        from supervisor import xmlrpc
+        from xmlrpclib import Fault
+        if sigspec == 'XXX':
+            raise Fault(xmlrpc.Faults.BAD_ARGUMENTS, 'BAD_ARGUMENTS')
+        if name == 'BAD_NAME:BAD_NAME':
+            raise Fault(xmlrpc.Faults.BAD_NAME, 'BAD_NAME:BAD_NAME')
+        if name == 'BAD_NAME':
+            raise Fault(xmlrpc.Faults.BAD_NAME, 'BAD_NAME')
+        if name == 'NOT_RUNNING':
+            raise Fault(xmlrpc.Faults.NOT_RUNNING, 'NOT_RUNNING')
+        if name == 'FAILED':
+            raise Fault(xmlrpc.Faults.FAILED, 'FAILED')
+        
+        return True
+    
+    def signalAllProcesses(self, sigspec):
+        from supervisor import xmlrpc
+        return [
+            {'name':'foo','group':'foo',
+             'status': xmlrpc.Faults.SUCCESS,
+             'description': 'OK'},
+            {'name':'foo2', 'group':'foo2',
+             'status':xmlrpc.Faults.SUCCESS,'description': 'OK'},
+            {'name':'failed', 'group':'failed_group',
+             'status':xmlrpc.Faults.BAD_NAME,
+             'description':'FAILED'}
+            ]
+
 class DummyPGroupConfig:
     def __init__(self, options, name='whatever', priority=999, pconfigs=None):
         self.options = options
